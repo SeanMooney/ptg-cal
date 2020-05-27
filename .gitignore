@@ -1,4 +1,5 @@
 work_dir/locations
 work_dir/tags
+work_dir/sessions
 .idea
 venv

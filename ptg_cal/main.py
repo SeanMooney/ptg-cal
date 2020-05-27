@@ -20,7 +20,7 @@ TimeSlot = namedtuple("TimeSlot", ["day","time", "sessions"])
 Session = namedtuple("Session", ["start_time", "end_time", "location", "title", "tags"])
 PP = pprint.PrettyPrinter(indent=4)
 pprint = PP.pprint
-
+title_regex = '[^0-9A-Za-z&-]+'
 
 def skip_blank_rows(reader):
     row = next(reader)
@@ -66,6 +66,7 @@ def populate_session_tags(sessions):
             tags.add(project)
         elif "sig" in title:
             tags.add("sig")
+        tags.update(tag for tag in title.replace("/", " ").split(" ") if tag)
         session.tags.update(tags)
         yield session
 
@@ -81,7 +82,7 @@ def extract_time_slots(raw_data):
         day = row[0]
         day_of_month = int(day.split()[2])
         time_range = row[1]
-        times = time_range.replace("UTC", "").split('-')
+        times = [time for time in time_range.replace("UTC", "").split('-') if time != ' ']
         start_time = DateTime(2020, 6, day_of_month, hour=int(times[0]), tzinfo=UTC).isoformat()
         end_time = DateTime(2020, 6, day_of_month, hour=int(times[1]), tzinfo=UTC).isoformat()
         if end_time < start_time and int(times[1])==0:
@@ -117,29 +118,28 @@ def merge_adjacent_sessions(sessions_by_location):
         sessions_by_start = sorted(sessions, key=lambda x: x.start_time)
         merged_sessions = []
         session_index = 0
-        previous_session = sessions_by_start[session_index]
         sessions_to_merge = []
         sessions_lenght = len(sessions_by_start)
         while session_index < sessions_lenght:
-            finished = False
+            previous_session = sessions_by_start[session_index]
             peak_index = session_index
-            while peak_index < sessions_lenght and not finished:
+            while peak_index < sessions_lenght:
                 peak_index += 1
                 if peak_index == sessions_lenght:
-                    finished = True
                     session_index += 1
                     if not sessions_to_merge:
                         merged_sessions.append(previous_session)
                     else:
                         session_index = peak_index
-                    continue
+                    break
                 next_session = sessions_by_start[peak_index]
                 if(next_session.title == previous_session.title
                         and next_session.start_time == previous_session.end_time):
-                    # its a set dont care if i add duplicates
                     if previous_session not in sessions_to_merge:
                         sessions_to_merge.append(previous_session)
                     sessions_to_merge.append(next_session)
+                else:
+                    break
             if sessions_to_merge:
                 start_time = sessions_to_merge[0].start_time
                 end_time = sessions_to_merge[-1].end_time
@@ -147,6 +147,11 @@ def merge_adjacent_sessions(sessions_by_location):
                 tags = sessions_to_merge[0].tags
                 new_session = Session(start_time, end_time,location, title, tags)
                 merged_sessions.append(new_session)
+                sessions_to_merge = []
+                session_index = peak_index
+            else:
+                merged_sessions.append(previous_session)
+                session_index += 1
         result[location] = merged_sessions
     return result
 
@@ -172,8 +177,9 @@ def create_ical_event_from_session(session):
 def create_ical_file_per_session(session_mapping, type):
     for key, sessions in session_mapping.items():
         for session in sessions:
-            title = re.sub('[^0-9A-Za-z]+', '_', session.title)
-            path = os.path.join(type, key, f"{title}.ical")
+            title = re.sub(title_regex, '_', session.title)
+            start = session.start_time
+            path = os.path.join(type, key, f"{title}-{start}.ical")
             event = create_ical_event_from_session(session)
             cal = Calendar()
             cal.events.add(event)
@@ -184,7 +190,7 @@ def create_ical_file_per_session(session_mapping, type):
 def create_ical_file_per_topic(session_mapping, type):
     for key, sessions in session_mapping.items():
         cal = Calendar()
-        topic = re.sub('[^0-9A-Za-z]+', '_', key)
+        topic = re.sub(title_regex, '_', key)
         path = os.path.join(type, f"{topic}.ical")
         for session in sessions:
             event = create_ical_event_from_session(session)
@@ -208,12 +214,18 @@ def main():
 
         # pprint(sessions_by_tag)
 
-        create_ical_folders(sessions_by_tag.keys(), "tags")
-        create_ical_file_per_session(sessions_by_tag, "tags")
+        # create_ical_folders(sessions_by_tag.keys(), "tags")
+        # create_ical_file_per_session(sessions_by_tag, "tags")
+        create_ical_folders([], "tags")
         create_ical_file_per_topic(sessions_by_tag, "tags")
 
-        create_ical_folders(sessions_by_location.keys(), "locations")
-        create_ical_file_per_session(sessions_by_location, "locations")
+        # create_ical_folders(sessions_by_location.keys(), "locations")
+        # create_ical_file_per_session(sessions_by_location, "locations")
+        create_ical_folders([], "locations")
         create_ical_file_per_topic(sessions_by_location, "locations")
+
+        create_ical_folders([], "sessions")
+        all_sessions = itertools.chain(*sessions_by_location.values())
+        create_ical_file_per_session({"sessions": all_sessions}, "")
 
 main()
